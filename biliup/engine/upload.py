@@ -3,6 +3,8 @@ import os
 import shutil
 import subprocess
 from pathlib import Path
+from functools import reduce
+from operator import add
 
 logger = logging.getLogger('biliup')
 
@@ -79,6 +81,6 @@ class UploadBase:
                     logger.info(f"move to {(dest / path.name).absolute()}")
             if post_processor.get('run'):
                 process = subprocess.run(
-                    post_processor['run'], shell=True, input='\n'.join(map(lambda x: str(Path(x).absolute()), data)) + '\n',
+                    post_processor['run'], shell=True, input=reduce(add, map(lambda x: str(Path(x).absolute()) + '\n', data)),
                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, check=True)
                 logger.info(process.stdout.rstrip())
