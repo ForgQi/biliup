@@ -22,8 +22,7 @@ class Bililive(DownloadBase):
         self.bilibili_danmaku = config.get('bilibili_danmaku', False)
         self.bilibili_danmaku_detail = config.get('bilibili_danmaku_detail', False)
         self.__real_room_id = None
-        self.__is_login = False
-        self.__bili_uid = 0
+        self.__login_mid = 0
         # self.fake_headers['referer'] = url
         if config.get('user', {}).get('bili_cookie'):
             self.fake_headers['cookie'] = config.get('user', {}).get('bili_cookie')
@@ -31,12 +30,10 @@ class Bililive(DownloadBase):
             cookie_file_name = config.get('user', {}).get('bili_cookie_file')
             try:
                 with open(cookie_file_name, encoding='utf-8') as stream:
-                    user_data = json.load(stream)
-                    cookies = user_data["cookie_info"]["cookies"]
+                    cookies = json.load(stream)["cookie_info"]["cookies"]
                     cookies_str = ''
                     for i in cookies:
                         cookies_str += f"{i['name']}={i['value']};"
-                    self.__bili_uid = user_data['token_info']['mid']
                     self.fake_headers['cookie'] = cookies_str
             except Exception:
                 logger.exception("load_cookies error")
@@ -89,8 +86,9 @@ class Bililive(DownloadBase):
             is_new_live = False
 
         if is_check:
-            self.__is_login = await self.check_login_status()
             return True
+        else:
+            self.__login_mid = await self.check_login_status()
 
         # 复用原画 m3u8 流
         if  self.raw_stream_url is not None \
@@ -144,23 +142,27 @@ class Bililive(DownloadBase):
             stream_url = stream_info['url']
             logger.debug(f"{self.plugin_msg}: 使用 {current_cdn} 流")
 
+        self.raw_stream_url = normalize_cn204(
+            f"{stream_url['host']}{stream_url['base_url']}{stream_url['extra']}"
+        )
+
         # 替换 cn-gotcha01 节点
         cn01_sids = config.get('bili_replace_cn01', [])
-        if cn01_sids:
+        if cn01_sids and "cn-gotcha01" in current_cdn:
             if isinstance(cn01_sids, str): cn01_sids = cn01_sids.split(',')
-            if "cn-gotcha01" in current_cdn:
-                for sid in cn01_sids:
-                    __host = f"https://{sid}.bilivideo.com"
-                    __url = f"{__host}{stream_url['base_url']}{stream_url['extra']}"
-                    if (await self.acheck_url_healthy(__url)) is not None:
-                        stream_url['host'] = __host
-                        break
-                    else:
-                        logger.debug(f"{self.plugin_msg}: {sid} is not available")
+            for sid in cn01_sids:
+                new_url = f"https://{sid}.bilivideo.com{stream_url['base_url']}{stream_url['extra']}"
+                new_url = await self.acheck_url_healthy(new_url)
+                if new_url is not None:
+                    self.raw_stream_url = new_url
+                    break
+                else:
+                    logger.debug(f"{self.plugin_msg}: {sid} is not available")
 
         # 强制原画
-        if quality_number == 10000 and config.get('bili_force_source'):
-            if stream_info['suffix'] != 'origin':
+        if quality_number <= 10000 and config.get('bili_force_source'):
+            # 不处理 qn 20000
+            if stream_info['suffix'] not in {'origin', 'uhd', 'maxhevc'}:
                 __base_url = stream_url['base_url'].replace(f"_{stream_info['suffix']}", "")
                 __sk = match1(stream_url['extra'], r'sk=([^&]+)')
                 __extra = stream_url['extra'].replace(__sk, __sk[:32])
@@ -173,10 +175,6 @@ class Bililive(DownloadBase):
                         f"{self.plugin_msg}: force_source 处理 {current_cdn} 失败 {stream_info['stream_name']}"
                     )
 
-        if not self.raw_stream_url:
-            self.raw_stream_url = normalize_cn204(
-                f"{stream_url['host']}{stream_url['base_url']}{stream_url['extra']}"
-            )
 
         if config.get('bili_cdn_fallback'):
             __url = await self.acheck_url_healthy(self.raw_stream_url)
@@ -208,12 +206,13 @@ class Bililive(DownloadBase):
         if self.bilibili_danmaku:
             self.danmaku = DanmakuClient(
                 self.url, self.gen_download_filename(), {
-                    'room_id': self.__real_room_id, 
-                    'cookie': self.fake_headers.get("cookie"),
+                    'room_id': self.__real_room_id,
+                    'cookie': self.fake_headers.get("cookie") if self.__login_mid else "",
                     'detail': self.bilibili_danmaku_detail,
-                    'bili_uid': self.__bili_uid
+                    'uid': self.__login_mid if self.bilibili_danmaku_detail else 0
                 }
             )
+
 
     async def get_play_info(self, api: str, qn: int = 10000) -> dict:
         full_url = f"{api}/xlive/web-room/v2/index/getRoomPlayInfo"
@@ -248,7 +247,7 @@ class Bililive(DownloadBase):
         full_url = f"{api}/live-bvc/master.m3u8"
         params = {
             "cid": self.__real_room_id,
-            # "mid": {self.__login_info.get('mid')},
+            "mid": self.__login_mid,
             "pt": "html5", # platform
             # "p2p_type": "-1",
         }
@@ -278,8 +277,7 @@ class Bililive(DownloadBase):
             streams = play_info['playurl_info']['playurl']['stream']
             if protocol == 'hls_fmp4':
                 if config.get('bili_anonymous_origin'):
-                    # 开播检测运行在主线程，拿不到保存的登录状态
-                    if special_type in play_info['all_special_types']:
+                    if special_type in play_info['all_special_types'] and not self.__login_mid:
                         logger.warn(f"{self.plugin_msg}: 特殊直播{special_type}")
                     else:
                         stream_urls = await self.get_master_m3u8(api)
@@ -302,19 +300,22 @@ class Bililive(DownloadBase):
         # 空字典照常返回，重试交给上层方法处理
         return stream_urls
 
-    async def check_login_status(self):
-        """检查B站登录状态"""
+    async def check_login_status(self) -> int:
+        """
+        检查B站登录状态
+        :return: 当前登录用户 mid
+        """
         try:
             _res = await client.get('https://api.bilibili.com/x/web-interface/nav', headers=self.fake_headers)
             user_data = json.loads(_res.text).get('data', {})
             if user_data.get('isLogin'):
                 logger.info(f"用户名：{user_data['uname']}, mid：{user_data['mid']}, isLogin：{user_data['isLogin']}")
-                return True
+                return user_data['mid']
             else:
                 logger.warning(f"{self.plugin_msg}: 未登录，或将只能录制到最低画质。")
         except Exception as e:
             logger.error(f"{self.plugin_msg}: 登录态校验失败 {e}")
-        return False
+        return 0
 
 # Copy from room-player.js
 def check_areablock(data):

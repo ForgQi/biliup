@@ -130,6 +130,7 @@ class UploadStreamers(BaseModel):
     up_selection_reply: Mapped[int] = mapped_column(nullable=True)  # 精选评论
     up_close_reply: Mapped[int] = mapped_column(nullable=True)  # 关闭评论
     up_close_danmu: Mapped[int] = mapped_column(nullable=True)  # 精选评论
+    extra_fields: Mapped[str] = mapped_column(nullable=True)  # 额外字段
     livestreamers: Mapped[List["LiveStreamers"]] = relationship(back_populates="uploadstreamers")
 
 

@@ -92,6 +92,7 @@ const Edit = () => {
                 dtime: values?.isDtime ? values?.dtime : null,
                 credits: values?.credits ?? null,
                 uploader: values?.uploader ?? null,
+                extra_fields: values?.extra_fields ?? '',
               }
               const result = await trigger(studioEntity)
               await mutate(result)

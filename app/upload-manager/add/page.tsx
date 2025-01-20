@@ -77,6 +77,7 @@ export default function Add() {
                 dtime: values.isDtime ? values?.dtime : null,
                 credits: values.credits,
                 uploader: values.uploader,
+                extra_fields: values.extra_fields ?? '',
               }
 
               const result = await trigger(studioEntity)

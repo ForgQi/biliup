@@ -88,6 +88,7 @@ export interface StudioEntity {
 	open_elec: number;
 	credits: Credit[];
 	uploader: string;
+	extra_fields?: string;
 }
 
 export interface LiveStreamerEntity {

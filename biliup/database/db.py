@@ -56,7 +56,8 @@ def get_stream_info(db: Session, name: str) -> dict:
         order_by(desc(StreamerInfo.id))
     ).first()
     if res:
-        res = res._asdict()
+        res = res._asdict()['StreamerInfo'].as_dict()
+        # print(res['StreamerInfo'].as_dict())
         res["date"] = datetime_to_struct_time(res["date"])
         return res
     return {}
@@ -187,6 +188,7 @@ def migrate_via_alembic():
         return
     command.upgrade(alembic_cfg, 'head')
     print("检测到旧版数据库，已完成自动迁移")
+
 
 def backup(db: Session):
     """备份数据库"""
