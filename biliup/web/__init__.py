@@ -480,6 +480,7 @@ async def m_upload(request):
     json_data = await request.json()
     json_data['params']['uploader'] = 'stream_gears'
     json_data['params']['name'] = json_data['params']['template_name']
+    # json_data['params']['extra_fields'] = "{\"is_only_self\": 1}"
     threading.Thread(target=biliup_uploader, args=(json_data['files'], json_data['params'])).start()
     return web.json_response({'status': 'ok'})
 

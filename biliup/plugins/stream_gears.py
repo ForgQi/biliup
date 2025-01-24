@@ -13,7 +13,7 @@ class BiliWeb(UploadBase):
             self, principal, data, submit_api=None, copyright=2, postprocessor=None, dtime=None,
             dynamic='', lines='AUTO', threads=3, tid=122, tags=None, cover_path=None, description='',
             dolby=0, hires=0, no_reprint=0, open_elec=0, credits=None,
-            user_cookie='cookies.json', copyright_source=None
+            user_cookie='cookies.json', copyright_source=None, extra_fields = ""
     ):
         super().__init__(principal, data, persistence_path='bili.cookie', postprocessor=postprocessor)
         if credits is None:
@@ -42,6 +42,9 @@ class BiliWeb(UploadBase):
         self.open_elec = open_elec
         self.user_cookie = user_cookie
         self.copyright_source = copyright_source
+
+        self.extra_fields = extra_fields
+        
 
     def upload(self, file_list) -> List[UploadBase.FileInfo]:
         line = None
@@ -90,7 +93,8 @@ class BiliWeb(UploadBase):
             self.threads,
             desc_v2,
             dtime,
-            line
+            line,
+            self.extra_fields
         )
         logger.info(f"上传成功: {self.principal}")
         return file_list

@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react'
+import React, { useState, useMemo, useEffect, useCallback } from 'react'
 import { FormFCChild } from '@douyinfe/semi-ui/lib/es/form'
 import {
   IconChevronDown,
@@ -18,6 +18,8 @@ import {
   Notification,
   ScrollList,
   ScrollItem,
+  // TextArea,
+  useFormState,
 } from '@douyinfe/semi-ui'
 import useSWR from 'swr'
 import { BiliType, fetcher, StudioEntity } from '../lib/api-streamer'
@@ -181,7 +183,36 @@ const TemplateFields: React.FC<FormFCChild<StudioEntity & { isDtime: boolean }>>
         setSelectedMinutes(Math.floor(minutes / 5) * 5)
       }
     }
-  }, [formApi])
+  }, [formApi]);
+
+  // useEffect(() => {
+  //   const extraFieldsList = formApi.getValue('extra_fields_list') as Array<{key: string; value: string}>;
+  //   if (!extraFieldsList?.length) return;
+
+  //   const extraFieldsObj = extraFieldsList.reduce((tempObj: Record<string, string | number>, item) => {
+  //     if (item?.key && item?.value !== undefined) {
+  //       tempObj[item.key] = !isNaN(Number(item.value)) ? Number(item.value) : item.value;
+  //     }
+  //     return tempObj;
+  //   }, {});
+  //   formApi.setValue('extra_fields', JSON.stringify(extraFieldsObj));
+  // }, []);
+
+  // useEffect(() => {
+  //   const extraFields = formApi.getValue('extra_fields');
+  //   if (extraFields) {
+  //     try {
+  //       const parsedFields = JSON.parse(extraFields);
+  //       const fieldsList = Object.entries(parsedFields).map(([key, value]) => ({
+  //         key,
+  //         value: String(value)
+  //       }));
+  //       formApi.setValue('extra_fields_list', fieldsList);
+  //     } catch (e) {
+  //       console.error('解析 extra_fields 失败:', e);
+  //     }
+  //   }
+  // }, []);
 
   return (
     <>
@@ -290,6 +321,91 @@ const TemplateFields: React.FC<FormFCChild<StudioEntity & { isDtime: boolean }>>
           maxCount={2000}
           showClear
         />
+        <TextArea
+          style={{ maxWidth: 560 }}
+          field="extra_fields"
+          label="额外字段"
+          placeholder="Json格式，示例：{key: 'value'}"
+          autosize
+          maxCount={2000}
+          showClear
+          rules={[
+            {
+              validator: (rule, value) => {
+                if (!value) return true;
+                try {
+                  JSON.parse(value);
+                  return true;
+                } catch (e) {
+                  return false;
+                }
+              },
+              message: '请输入正确的Json格式文本',
+            }
+          ]}
+        />
+        {/* <ArrayField
+          field='extra_fields_list'
+          initValue={(() => {
+            const extraFields = formApi.getValue('extra_fields');
+            if (!extraFields) return [];
+            try {
+              const parsedFields = JSON.parse(extraFields);
+              return Object.entries(parsedFields).map(([key, value]) => ({
+                key,
+                value: String(value)
+              }));
+            } catch (e) {
+              console.error('解析 extra_fields 失败:', e);
+              return [];
+            }
+          })()}
+        >
+          {({ add, arrayFields }) => (
+            <React.Fragment>
+              <Button onClick={add} icon={<IconPlusCircle />} theme='light'>Add new line</Button>
+              {
+                arrayFields.map(({ field, key, remove }, i) => (
+                  <div key={key} style={{ width: 1000, display: 'flex' }}>
+                    <Input
+                      field={`${field}.key`}
+                      label={`${field}.key`}
+                      style={{ width: 200, marginRight: 16 }}
+                      rules={[
+                        {
+                          validator: (rule, value) => {
+                            if (!value) return true;
+                            const currentFields = (formApi.getValue('extra_fields_list') || []) as Array<{key: string; value: string}>;
+                            const keyCount = currentFields.filter(
+                              (item: any, index: number) =>
+                                item.key === value &&
+                                `extra_fields_list.${index}.key` !== field + '.key'
+                            ).length;
+                            if (keyCount > 1) {
+                              throw new Error('键名不能重复');
+                            }
+                            return true;
+                          }
+                        }
+                      ]}
+                    />
+                    <Input
+                      field={`${field}.value`}
+                      label={`${field}.value`}
+                      style={{ width: 200, marginRight: 16 }}
+                    />
+                    <Button
+                      type='danger'
+                      theme='borderless'
+                      icon={<IconMinusCircle />}
+                      onClick={remove}
+                      style={{ margin: 12 }}
+                    />
+                  </div>
+                ))}
+            </React.Fragment>
+          )}
+        </ArrayField> */}
 
         <div style={{ display: 'flex', alignItems: 'center', color: 'var(--semi-color-tertiary)' }}>
           <Switch

@@ -14,7 +14,7 @@ class BiliWeb(UploadBase):
             self, principal, data, submit_api=None, copyright=2, postprocessor=None, dtime=None,
             dynamic='', lines='AUTO', threads=3, tid=122, tags=None, cover_path=None, description='',
             dolby=0, hires=0, no_reprint=0, open_elec=0, credits=None,
-            user_cookie='cookies.json', copyright_source=None
+            user_cookie='cookies.json', copyright_source=None, extra_fields = ""
     ):
         super().__init__(principal, data, persistence_path='bili.cookie', postprocessor=postprocessor)
         if tags is None:
@@ -43,7 +43,8 @@ class BiliWeb(UploadBase):
         self.open_elec = open_elec
         self.user_cookie = user_cookie
         self.copyright_source = copyright_source
-
+        self.extra_fields = extra_fields
+        
     def upload(self, file_list: List[UploadBase.FileInfo]) -> List[UploadBase.FileInfo]:
         if self.credits:
             desc_v2 = self.creditsToDesc_v2()
@@ -74,9 +75,9 @@ class BiliWeb(UploadBase):
             "open_elec": self.open_elec,
             "limit": self.threads,
             "desc_v2": desc_v2,
+            "extra_fields": self.extra_fields,
             "dtime": int(time.time() + self.dtime) if self.dtime else None,
         }
-
         upload_process = mp.get_context('spawn').Process(target=stream_gears_upload, daemon=True, kwargs=upload_args)
         upload_process.start()
         upload_process.join()

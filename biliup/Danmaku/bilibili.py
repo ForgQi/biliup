@@ -27,31 +27,11 @@ class Bilibili:
 
     @staticmethod
     async def get_ws_info(url, content):
-        # 判断是否要录制详细弹幕
-        if content.get('detail', False):
-            # 获取传入的用户信息
-            cookie_str = content.get('cookie', "") if content.get('cookie', False) else ""
-            buid = content.get('bili_uid', 0)
-            Bilibili.headers['cookie'] = cookie_str
 
-            # 如buid不为0但没有cookie传入
-            if not cookie_str and buid != 0:
-                build = 0
-
-            # 获取B站用户ID
-            if cookie_str and buid == 0:
-                async with aiohttp.ClientSession(headers=Bilibili.headers) as session:
-                    try:
-                        async with session.get(f"https://api.bilibili.com/x/web-interface/nav", timeout=5) as resp:
-                            resp_data = await resp.json()
-                            buid = resp_data["data"]["mid"]
-                            logger.info(f"获取B站用户ID {buid}")
-                    except Exception as e:
-                        buid = 0
-                        Bilibili.headers['cookie'] = ""
-                        pass
-        else:
-            buid = 0
+        uid = content['uid']
+        # 传入内容中，如果 uid 不为 0，则 cookie 必然存在，且必然为详细模式
+        if uid > 0:
+            Bilibili.headers['cookie'] = content['cookie']
 
         # 获取弹幕认证信息
         danmu_wss_url = 'wss://broadcastlv.chat.bilibili.com/sub'
@@ -74,7 +54,7 @@ class Bilibili:
                     pass
 
             w_data = {
-                'uid': buid,
+                'uid': uid,
                 'roomid': room_id,
                 'protover': 3,
                 'platform': 'web',
@@ -83,7 +63,7 @@ class Bilibili:
             }
 
             data = json.dumps(w_data).encode('utf-8')
-            logger.info(f"danmaku auth info {data}")
+            # logger.info(f"danmaku auth info {data}")
             reg_datas = [(pack('>i', len(data) + 16) + b'\x00\x10\x00\x01' + pack('>i', 7) + pack('>i', 1) + data)]
         return danmu_wss_url, reg_datas
 

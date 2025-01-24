@@ -34,11 +34,13 @@ const Global: React.FC = () => {
             <div style={{ fontSize: '14px' }}>
               选择全局默认的下载插件, 可选:
               <br />
-              1. streamlink（仅限 hls 流，不支持的流将回退到 ffmpeg。请手动安装ffmpeg）
+              1. streamlink（仅限 hls 流，不支持的流将回退到 ffmpeg。需安装 FFmpeg）
               <br />
-              2. ffmpeg（ffmpeg 下载。请手动安装ffmpeg）
+              2. ffmpeg（需安装 FFmpeg）
               <br />
-              3. stream-gears（默认）
+              3. stream-gears（默认。防 FLV 流花屏）
+              <br />
+              4. sync-downloader（流式边录边传。文件不保存硬盘，不受 pool2/threads 控制，请确保上传带宽充足。需安装 FFmpeg）
             </div>
           }
           style={{ width: '100%' }}
@@ -51,6 +53,7 @@ const Global: React.FC = () => {
           <Select.Option value="streamlink">streamlink（hls多线程下载）</Select.Option>
           <Select.Option value="ffmpeg">ffmpeg</Select.Option>
           <Select.Option value="stream-gears">stream-gears（默认）</Select.Option>
+          <Select.Option value="sync-downloader">sync-downloader（边录边传）</Select.Option>
         </Form.Select>
         <Form.InputNumber
           label="视频分段大小（file_size）"

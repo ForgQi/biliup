@@ -1,6 +1,8 @@
 import asyncio
+import inspect
 import logging
 import os
+import queue
 import re
 import subprocess
 import threading
@@ -16,13 +18,17 @@ from requests.utils import DEFAULT_ACCEPT_ENCODING
 from httpx import HTTPStatusError
 
 from biliup.common.util import client, loop, check_timerange
-from biliup.database.db import add_stream_info, SessionLocal, update_cover_path, update_room_title, update_file_list
+from biliup.database.db import add_stream_info, SessionLocal, get_stream_info, update_cover_path, update_room_title, update_file_list
 from biliup.plugins import random_user_agent
 import stream_gears
 from PIL import Image
 
 from biliup.config import config
 from biliup.Danmaku import IDanmakuClient
+from biliup.plugins.bili_webup_sync import BiliWebAsync
+from biliup.uploader import fmt_title_and_desc
+
+from .sync_downloader import SyncDownloader
 
 logger = logging.getLogger('biliup')
 
@@ -87,6 +93,8 @@ class DownloadBase(ABC):
 
     def download(self):
         logger.info(f"{self.plugin_msg}: Start downloading {self.raw_stream_url}")
+        # 调试使用边录边上传功能
+        # self.downloader = 'sync-downloader'
         if self.is_download:
             if not shutil.which("ffmpeg"):
                 logger.error("未安装 FFMpeg 或不存在于 PATH 内")
@@ -96,16 +104,31 @@ class DownloadBase(ABC):
                 return self.ffmpeg_segment_download()
 
         parsed_url_path = urlparse(self.raw_stream_url).path
-        if self.downloader == 'streamlink' or self.downloader == 'ffmpeg':
-            if shutil.which("ffmpeg"):
-                # streamlink无法处理flv,所以回退到ffmpeg
-                if self.downloader == 'streamlink' and '.flv' not in parsed_url_path:
-                    return self.ffmpeg_download(use_streamlink=True)
-                else:
-                    return self.ffmpeg_download()
-            else:
+        if self.downloader != 'stream-gears':
+            if not shutil.which("ffmpeg"):
                 logger.error("未安装 FFMpeg 或不存在于 PATH 内，本次下载使用 stream-gears")
                 logger.debug("Current user's PATH is:" + os.getenv("PATH"))
+
+            # 同步下载上传器
+            if self.downloader == 'sync-downloader':
+                logger.info(f"{self.plugin_msg}: 使用同步下载器")
+                stream_info = config.get('streamers', {}).get(self.fname, {})
+                stream_info.update({'name': self.fname})
+                if not self.file_size:
+                    self.file_size = 2 * 1024 * 1024 * 1024
+                else:
+                    min_size = 10 * 1024 * 1024
+                    self.file_size = ((self.file_size + min_size - 1) // min_size) * min_size  # 向上取整
+                sync_download(self.raw_stream_url, self.fake_headers,
+                              max_file_size=int(self.file_size / 1024 / 1024),
+                              output_prefix=self.gen_download_filename(True),
+                              stream_info=stream_info,
+                              file_name_callback=lambda file_name: self.__download_segment_callback(file_name))
+                return True
+            # streamlink无法处理flv,所以回退到ffmpeg
+            if self.downloader == 'streamlink' and '.flv' not in parsed_url_path:
+                return self.ffmpeg_download(use_streamlink=True)
+            return self.ffmpeg_download()
 
         if '.flv' in parsed_url_path:
             # 假定flv流
@@ -178,7 +201,10 @@ class DownloadBase(ABC):
             # ffmpeg 输入参数
             input_args = []
             # ffmpeg 输出参数
-            output_args = []
+            output_args = [
+                '-c',
+                'copy',
+            ]
             if use_streamlink:
                 streamlink_cmd = [
                     'streamlink',
@@ -218,7 +244,7 @@ class DownloadBase(ABC):
             else:
                 output_args += ['-f', self.suffix]
 
-            args = ['ffmpeg', '-y', *input_args, *output_args, '-c', 'copy',
+            args = ['ffmpeg', '-y', *input_args, *output_args,
                     f'{fmt_file_name}.{self.suffix}.part']
             with subprocess.Popen(args, stdin=subprocess.DEVNULL if not streamlink_proc else streamlink_proc.stdout,
                                   stdout=subprocess.PIPE, stderr=subprocess.STDOUT) as proc:
@@ -329,7 +355,7 @@ class DownloadBase(ABC):
 
         self.download_cover(
             time.strftime(self.gen_download_filename().encode("unicode-escape").decode(), end_time if end_time else time.localtime()
-                           ).encode().decode("unicode-escape"))
+                          ).encode().decode("unicode-escape"))
         # 更新数据库中封面存储路径
         with SessionLocal() as db:
             update_cover_path(db, self.database_row_id, self.live_cover_path)
@@ -416,7 +442,7 @@ class DownloadBase(ABC):
                     url = m3u8_obj.playlists[0].uri
                     logger.info(f'{self.plugin_msg}: stream url: {url}')
                     r = await __client_get(url)
-            else: # 处理 Flv
+            else:  # 处理 Flv
                 r = await __client_get(url, stream=True)
                 if r.headers.get('Location'):
                     url = r.headers['Location']
@@ -425,7 +451,7 @@ class DownloadBase(ABC):
             if r.status_code == 200:
                 return url
         except HTTPStatusError as e:
-            logger.error(f'{self.plugin_msg}: url {url}: status_code-{e.response.status_code}')
+            logger.debug(f'{self.plugin_msg}: url {url}: status_code-{e.response.status_code}')
         except:
             logger.debug(f'{self.plugin_msg}: url {url}: ', exc_info=True)
         return None
@@ -496,6 +522,42 @@ def stream_gears_download(url, headers, file_name, segment_time=None, file_size=
         )
 
 
+def sync_download(stream_url, headers, segment_duration=60, max_file_size=100, output_prefix="segment", stream_info=None, file_name_callback: Callable[[str], None] = None):
+    logger.info(f"启动同步下载器 max_file_size {max_file_size}MB")
+    video_queue = queue.SimpleQueue()
+    # video_queue.put(b'\x00')
+
+    def upload(video_queue, stream_info, stop_event: threading.Event):
+        with SessionLocal() as db:
+            data = get_stream_info(db, f"{stream_info['name']}")
+        data, _ = fmt_title_and_desc({**data, "name": stream_info['name']})
+        stream_info.update(data)
+        # 获取 BiliWebAsync.__init__ 的参数名
+        init_params = inspect.signature(BiliWebAsync.__init__).parameters
+        # 过滤 info 中的无关键
+        filtered_info = {key: value for key, value in stream_info.items() if key in init_params}
+
+        # 映射 'uploader' 到 'principal'
+        filtered_info['principal'] = ""
+        filtered_info["data"] = stream_info
+        uploader = BiliWebAsync(**filtered_info, video_queue=video_queue)
+        uploader.upload(total_size=max_file_size * 1024 * 1024,
+                        stop_event=stop_event, output_prefix=output_prefix,
+                        file_name_callback=file_name_callback)
+        # print("上传器结束")
+        logger.info(f"{stream_info['name']} 上传器结束")
+        # video_queue = queue.SimpleQueue()
+
+    downloader = SyncDownloader(stream_url, headers, segment_duration, max_file_size, output_prefix, video_queue)
+
+    # 启动上传器
+    upload_thread = threading.Thread(target=upload, args=(video_queue, stream_info, downloader.stop_event), daemon=True)
+    upload_thread.start()
+
+    downloader.run()
+    logger.info(f"{stream_info['name']} 下载器结束")
+
+
 def get_valid_filename(name):
     """
     Return the given string converted to a string that can be used for a clean
@@ -532,7 +594,8 @@ def get_duration(segment_time_str, time_range):
     time_diff = end_time_today - now
     if segment_time_str:
         segment_time_parts = list(map(int, segment_time_str.split(":")))
-        segment_time = timedelta(hours=segment_time_parts[0], minutes=segment_time_parts[1], seconds=segment_time_parts[2])
+        segment_time = timedelta(hours=segment_time_parts[0],
+                                 minutes=segment_time_parts[1], seconds=segment_time_parts[2])
 
         if time_diff > segment_time:
             return segment_time_str
